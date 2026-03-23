@@ -16,7 +16,9 @@
       --success: #22c55e;
     }
 
-    * { box-sizing: border-box; }
+    * {
+      box-sizing: border-box;
+    }
 
     body {
       margin: 0;
@@ -182,8 +184,9 @@
     }
 
     .message.deleted {
-      opacity: 0.8;
       background: #fafafa;
+      border-color: #d1d5db;
+      opacity: 1;
     }
 
     .name {
@@ -245,8 +248,8 @@
     }
 
     .message.deleted .text {
-      color: #9ca3af;
-      font-style: italic;
+      color: #6b7280;
+      font-style: normal;
     }
 
     .meta {
@@ -266,11 +269,26 @@
     }
 
     @media (max-width: 640px) {
-      .app { padding: 10px; }
-      .chat { height: 74vh; padding: 12px; }
-      h1 { font-size: 17px; }
-      .toolbar input { width: 100%; }
-      .toolbar button { flex: 1 1 auto; }
+      .app {
+        padding: 10px;
+      }
+
+      .chat {
+        height: 74vh;
+        padding: 12px;
+      }
+
+      h1 {
+        font-size: 17px;
+      }
+
+      .toolbar input {
+        width: 100%;
+      }
+
+      .toolbar button {
+        flex: 1 1 auto;
+      }
     }
   </style>
 </head>
@@ -318,8 +336,8 @@
       socket: null,
       isAtBottom: true,
       messageMap: new Map(),   // id -> HTMLElement
-      deletedIds: new Set(),    // deleted state
-      messageStore: new Map()   // id -> latest snapshot
+      messageStore: new Map(),  // id -> latest message snapshot
+      deletedIds: new Set()     // id set
     };
 
     function setConnectionState(stateName, text) {
@@ -382,20 +400,42 @@
       return msg;
     }
 
-    function isDeleted(data, id) {
+    function upsertMessage(data) {
+      const normalized = normalizeMessage(data);
+      const id = normalized.id;
+      const previous = state.messageStore.get(id);
+
+      const merged = previous ? { ...previous, ...normalized } : normalized;
+
+      if (previous?.replyTo && !merged.replyTo) {
+        merged.replyTo = cloneDeep(previous.replyTo);
+      }
+
+      if (state.deletedIds.has(id)) {
+        merged.deleted = true;
+        merged.isDeleted = true;
+        merged.status = 'deleted';
+      }
+
+      state.messageStore.set(id, cloneDeep(merged));
+      return merged;
+    }
+
+    function isDeletedMessage(msg, id) {
       return Boolean(
-        data?.deleted ||
-        data?.isDeleted ||
-        data?.status === 'deleted' ||
+        msg?.deleted ||
+        msg?.isDeleted ||
+        msg?.status === 'deleted' ||
         state.deletedIds.has(id)
       );
     }
 
-    function getMessageSnapshotById(id) {
+    function getSnapshotById(id) {
       const stored = state.messageStore.get(id);
       if (!stored) return null;
 
       return {
+        id,
         username: stored.username || stored.from || '不明',
         message: stored.message || '',
         color: stored.color || '#1f2937',
@@ -408,74 +448,55 @@
       if (!replyTo) return '';
 
       const refId = replyTo.id ?? replyTo.messageId ?? replyTo._id ?? null;
-      let snapshot = null;
+      const snapshot = refId
+        ? getSnapshotById(refId)
+        : null;
 
-      if (refId) {
-        snapshot = getMessageSnapshotById(refId);
-      }
+      const fallback = {
+        username: replyTo.username || replyTo.from || '不明',
+        message: replyTo.message || '',
+        color: replyTo.color || '#64748b',
+        timestamp: replyTo.timestamp || Date.now(),
+        deleted: Boolean(replyTo.deleted || replyTo.isDeleted || replyTo.status === 'deleted')
+      };
 
-      if (!snapshot) {
-        snapshot = {
-          username: replyTo.username || replyTo.from || '不明',
-          message: replyTo.message || '',
-          color: replyTo.color || '#64748b',
-          timestamp: replyTo.timestamp || Date.now(),
-          deleted: Boolean(replyTo.deleted || replyTo.isDeleted || replyTo.status === 'deleted')
-        };
-      }
-
-      const username = snapshot.username || '不明';
-      const message = snapshot.message || '';
-      const safeText = escapeHtml(message);
-      const preview = safeText.length > 120 ? safeText.slice(0, 120) + '…' : safeText;
+      const src = snapshot || fallback;
+      const previewText = escapeHtml(src.message);
+      const preview = previewText.length > 120 ? previewText.slice(0, 120) + '…' : previewText;
 
       return `
         <div class="reply">
-          <span class="reply-name">↩ ${escapeHtml(username)}:</span>
+          <span class="reply-name">↩ ${escapeHtml(src.username)}:</span>
           <span class="reply-text"> ${preview}</span>
         </div>
       `;
     }
 
-    function storeMessage(data) {
-      const normalized = normalizeMessage(data);
-      const id = normalized.id;
-      const previous = state.messageStore.get(id);
+    function renderDeletedBadge(messageEl) {
+      const nameEl = messageEl.querySelector('.name');
+      if (!nameEl) return;
 
-      const merged = previous ? { ...previous, ...normalized } : normalized;
-
-      if (previous?.replyTo && !merged.replyTo) {
-        merged.replyTo = cloneDeep(previous.replyTo);
-      }
-
-      state.messageStore.set(id, cloneDeep(merged));
-      return merged;
-    }
-
-    function renderDeleted(id) {
-      state.deletedIds.add(id);
-
-      const elMessage = state.messageMap.get(id);
-      if (!elMessage) return;
-
-      elMessage.classList.add('deleted');
-
-      const nameEl = elMessage.querySelector('.name');
-      if (nameEl && !nameEl.querySelector('.deleted-badge')) {
+      if (!nameEl.querySelector('.deleted-badge')) {
         const badge = document.createElement('span');
         badge.className = 'deleted-badge';
         badge.textContent = '（削除済み）';
         nameEl.appendChild(badge);
       }
+    }
 
-      const textEl = elMessage.querySelector('.text');
-      if (textEl) {
-        textEl.textContent = 'このメッセージは削除されました。';
-      }
+    function markDeleted(id) {
+      state.deletedIds.add(id);
+
+      const messageEl = state.messageMap.get(id);
+      if (!messageEl) return;
+
+      messageEl.classList.add('deleted');
+      renderDeletedBadge(messageEl);
+      // 本文は消さない。削除済みのままそのまま見せる。
     }
 
     function renderMessage(data) {
-      const msg = storeMessage(data);
+      const msg = upsertMessage(data);
       const id = msg.id;
 
       let node = state.messageMap.get(id);
@@ -487,7 +508,7 @@
       }
 
       const isSystem = msg.username === 'システム' || msg.type === 'system';
-      const deleted = isDeleted(msg, id);
+      const deleted = isDeletedMessage(msg, id);
       const own = Boolean(msg.isOwn);
 
       if (isSystem) {
@@ -508,6 +529,7 @@
       const color = escapeHtml(msg.color || '#1f2937');
 
       node.className = 'message' + (own ? ' own' : '') + (deleted ? ' deleted' : '');
+
       node.innerHTML = `
         ${reply}
         <div class="name" style="color:${color}">
@@ -550,6 +572,12 @@
         merged.replyTo = cloneDeep(previous.replyTo);
       }
 
+      if (state.deletedIds.has(id)) {
+        merged.deleted = true;
+        merged.isDeleted = true;
+        merged.status = 'deleted';
+      }
+
       state.messageStore.set(id, cloneDeep(merged));
       renderMessage(merged);
       rerenderDependentReplies(id);
@@ -562,8 +590,40 @@
 
     function deleteMessage(data) {
       const id = typeof data === 'object' && data !== null ? normalizeId(data) : data;
-      renderDeleted(id);
+
+      markDeleted(id);
+      const stored = state.messageStore.get(id);
+      if (stored) {
+        stored.deleted = true;
+        stored.isDeleted = true;
+        stored.status = 'deleted';
+        state.messageStore.set(id, cloneDeep(stored));
+      }
+
       rerenderDependentReplies(id);
+      showEmptyIfNeeded();
+      scrollIfNeeded();
+    }
+
+    function markAllDeleted() {
+      state.messageMap.forEach((_, id) => {
+        markDeleted(id);
+        const stored = state.messageStore.get(id);
+        if (stored) {
+          stored.deleted = true;
+          stored.isDeleted = true;
+          stored.status = 'deleted';
+          state.messageStore.set(id, cloneDeep(stored));
+        }
+      });
+
+      state.messageStore.forEach((msg, msgId) => {
+        const replyId = msg?.replyTo?.id ?? msg?.replyTo?.messageId ?? msg?.replyTo?._id ?? null;
+        if (replyId && state.deletedIds.has(replyId)) {
+          renderMessage(msg);
+        }
+      });
+
       showEmptyIfNeeded();
       scrollIfNeeded();
     }
@@ -594,19 +654,28 @@
 
       setConnectionState('', '接続中...');
 
-      state.socket.on('connect', () => setConnectionState('connected', '接続済み'));
-      state.socket.on('disconnect', () => setConnectionState('disconnected', '切断'));
-      state.socket.on('connect_error', () => setConnectionState('disconnected', '接続エラー'));
-      state.socket.on('reconnect', () => setConnectionState('connected', '再接続済み'));
+      state.socket.on('connect', () => {
+        setConnectionState('connected', '接続済み');
+      });
+
+      state.socket.on('disconnect', () => {
+        setConnectionState('disconnected', '切断');
+      });
+
+      state.socket.on('connect_error', () => {
+        setConnectionState('disconnected', '接続エラー');
+      });
+
+      state.socket.on('reconnect', () => {
+        setConnectionState('connected', '再接続済み');
+      });
 
       state.socket.on('message', addMessage);
       state.socket.on('messageUpdated', updateMessage);
       state.socket.on('messageDeleted', deleteMessage);
 
       state.socket.on('allMessagesDeleted', () => {
-        state.messageMap.forEach((_, id) => renderDeleted(id));
-        showEmptyIfNeeded();
-        scrollIfNeeded();
+        markAllDeleted();
       });
 
       state.socket.on('systemMessage', (text) => {
