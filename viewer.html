@@ -16,9 +16,7 @@
       --success: #22c55e;
     }
 
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
 
     body {
       margin: 0;
@@ -224,6 +222,18 @@
       color: #64748b;
       font-size: 13px;
       line-height: 1.45;
+      overflow: hidden;
+      word-break: break-word;
+    }
+
+    .reply-name {
+      font-weight: 700;
+      color: #475569;
+    }
+
+    .reply-text {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
     }
 
     .text {
@@ -256,26 +266,11 @@
     }
 
     @media (max-width: 640px) {
-      .app {
-        padding: 10px;
-      }
-
-      .chat {
-        height: 74vh;
-        padding: 12px;
-      }
-
-      h1 {
-        font-size: 17px;
-      }
-
-      .toolbar input {
-        width: 100%;
-      }
-
-      .toolbar button {
-        flex: 1 1 auto;
-      }
+      .app { padding: 10px; }
+      .chat { height: 74vh; padding: 12px; }
+      h1 { font-size: 17px; }
+      .toolbar input { width: 100%; }
+      .toolbar button { flex: 1 1 auto; }
     }
   </style>
 </head>
@@ -309,23 +304,28 @@
 
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script>
-    const chat = document.getElementById('chat');
-    const empty = document.getElementById('empty');
-    const connDot = document.getElementById('connDot');
-    const connText = document.getElementById('connText');
-    const serverUrlInput = document.getElementById('serverUrl');
-    const connectBtn = document.getElementById('connectBtn');
-    const disconnectBtn = document.getElementById('disconnectBtn');
+    const el = {
+      chat: document.getElementById('chat'),
+      empty: document.getElementById('empty'),
+      connDot: document.getElementById('connDot'),
+      connText: document.getElementById('connText'),
+      serverUrlInput: document.getElementById('serverUrl'),
+      connectBtn: document.getElementById('connectBtn'),
+      disconnectBtn: document.getElementById('disconnectBtn')
+    };
 
-    let socket = null;
-    let isAtBottom = true;
-    const messageMap = new Map();
-    const deletedIds = new Set();
+    const state = {
+      socket: null,
+      isAtBottom: true,
+      messageMap: new Map(),   // id -> HTMLElement
+      deletedIds: new Set(),    // deleted state
+      messageStore: new Map()   // id -> latest snapshot
+    };
 
-    function setConnectionState(state, text) {
-      connDot.classList.remove('connected', 'disconnected');
-      if (state) connDot.classList.add(state);
-      connText.textContent = text;
+    function setConnectionState(stateName, text) {
+      el.connDot.classList.remove('connected', 'disconnected');
+      if (stateName) el.connDot.classList.add(stateName);
+      el.connText.textContent = text;
     }
 
     function escapeHtml(text) {
@@ -346,17 +346,40 @@
     }
 
     function scrollIfNeeded(force = false) {
-      if (force || isAtBottom) {
-        chat.scrollTop = chat.scrollHeight;
+      if (force || state.isAtBottom) {
+        el.chat.scrollTop = el.chat.scrollHeight;
       }
     }
 
     function showEmptyIfNeeded() {
-      empty.style.display = messageMap.size === 0 ? 'block' : 'none';
+      el.empty.style.display = state.messageMap.size === 0 ? 'block' : 'none';
     }
 
     function normalizeId(data) {
       return data?.id ?? data?.messageId ?? data?._id ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
+
+    function cloneDeep(value) {
+      if (value == null || typeof value !== 'object') return value;
+
+      if (typeof structuredClone === 'function') {
+        try {
+          return structuredClone(value);
+        } catch (_) {}
+      }
+
+      return JSON.parse(JSON.stringify(value));
+    }
+
+    function normalizeMessage(data) {
+      const msg = cloneDeep(data) || {};
+      msg.id = normalizeId(msg);
+
+      if (msg.replyTo && typeof msg.replyTo === 'object') {
+        msg.replyTo = cloneDeep(msg.replyTo);
+      }
+
+      return msg;
     }
 
     function isDeleted(data, id) {
@@ -364,86 +387,149 @@
         data?.deleted ||
         data?.isDeleted ||
         data?.status === 'deleted' ||
-        deletedIds.has(id)
+        state.deletedIds.has(id)
       );
     }
 
+    function getMessageSnapshotById(id) {
+      const stored = state.messageStore.get(id);
+      if (!stored) return null;
+
+      return {
+        username: stored.username || stored.from || '不明',
+        message: stored.message || '',
+        color: stored.color || '#1f2937',
+        timestamp: stored.timestamp || Date.now(),
+        deleted: Boolean(stored.deleted || stored.isDeleted || stored.status === 'deleted' || state.deletedIds.has(id))
+      };
+    }
+
+    function buildReplyPreview(replyTo) {
+      if (!replyTo) return '';
+
+      const refId = replyTo.id ?? replyTo.messageId ?? replyTo._id ?? null;
+      let snapshot = null;
+
+      if (refId) {
+        snapshot = getMessageSnapshotById(refId);
+      }
+
+      if (!snapshot) {
+        snapshot = {
+          username: replyTo.username || replyTo.from || '不明',
+          message: replyTo.message || '',
+          color: replyTo.color || '#64748b',
+          timestamp: replyTo.timestamp || Date.now(),
+          deleted: Boolean(replyTo.deleted || replyTo.isDeleted || replyTo.status === 'deleted')
+        };
+      }
+
+      const username = snapshot.username || '不明';
+      const message = snapshot.message || '';
+      const safeText = escapeHtml(message);
+      const preview = safeText.length > 120 ? safeText.slice(0, 120) + '…' : safeText;
+
+      return `
+        <div class="reply">
+          <span class="reply-name">↩ ${escapeHtml(username)}:</span>
+          <span class="reply-text"> ${preview}</span>
+        </div>
+      `;
+    }
+
+    function storeMessage(data) {
+      const normalized = normalizeMessage(data);
+      const id = normalized.id;
+      const previous = state.messageStore.get(id);
+
+      const merged = previous ? { ...previous, ...normalized } : normalized;
+
+      if (previous?.replyTo && !merged.replyTo) {
+        merged.replyTo = cloneDeep(previous.replyTo);
+      }
+
+      state.messageStore.set(id, cloneDeep(merged));
+      return merged;
+    }
+
     function renderDeleted(id) {
-      deletedIds.add(id);
-      const el = messageMap.get(id);
-      if (!el) return;
+      state.deletedIds.add(id);
 
-      el.classList.add('deleted');
+      const elMessage = state.messageMap.get(id);
+      if (!elMessage) return;
 
-      const nameEl = el.querySelector('.name');
+      elMessage.classList.add('deleted');
+
+      const nameEl = elMessage.querySelector('.name');
       if (nameEl && !nameEl.querySelector('.deleted-badge')) {
         const badge = document.createElement('span');
         badge.className = 'deleted-badge';
         badge.textContent = '（削除済み）';
         nameEl.appendChild(badge);
       }
-    }
 
-    function clearAndRenderHistory(messages) {
-      chat.innerHTML = '';
-      messageMap.clear();
-      deletedIds.clear();
-
-      if (Array.isArray(messages)) {
-        messages.forEach(renderMessage);
+      const textEl = elMessage.querySelector('.text');
+      if (textEl) {
+        textEl.textContent = 'このメッセージは削除されました。';
       }
-
-      showEmptyIfNeeded();
-      scrollIfNeeded(true);
     }
 
     function renderMessage(data) {
-      const id = normalizeId(data);
-      let el = messageMap.get(id);
+      const msg = storeMessage(data);
+      const id = msg.id;
 
-      if (!el) {
-        el = document.createElement('div');
-        el.dataset.id = id;
-        messageMap.set(id, el);
-        chat.appendChild(el);
+      let node = state.messageMap.get(id);
+      if (!node) {
+        node = document.createElement('div');
+        node.dataset.id = id;
+        state.messageMap.set(id, node);
+        el.chat.appendChild(node);
       }
 
-      const system = data.username === 'システム' || data.type === 'system';
-      const deleted = isDeleted(data, id);
-      const own = Boolean(data.isOwn);
+      const isSystem = msg.username === 'システム' || msg.type === 'system';
+      const deleted = isDeleted(msg, id);
+      const own = Boolean(msg.isOwn);
 
-      if (system) {
-        el.className = 'message system';
-        el.innerHTML = `
-          <div>${escapeHtml(data.message || '')}</div>
+      if (isSystem) {
+        node.className = 'message system';
+        node.innerHTML = `
+          <div>${escapeHtml(msg.message || '')}</div>
           <div class="meta" style="justify-content:center;">
-            <span>${formatTime(data.timestamp || Date.now())}</span>
+            <span>${formatTime(msg.timestamp || Date.now())}</span>
           </div>
         `;
-        return el;
+        return node;
       }
 
-      const name = escapeHtml(data.username || data.from || '不明');
-      const text = data.message || '';
-      const statusText = data.statusText ? `<span class="status-text">${escapeHtml(data.statusText)}</span>` : '';
-      const reply = data.replyTo
-        ? `<div class="reply">↩ ${escapeHtml(data.replyTo.username || '不明')}: ${escapeHtml((data.replyTo.message || '').slice(0, 120))}${(data.replyTo.message || '').length > 120 ? '…' : ''}</div>`
-        : '';
+      const reply = buildReplyPreview(msg.replyTo);
+      const name = escapeHtml(msg.username || msg.from || '不明');
+      const text = msg.message || '';
+      const statusText = msg.statusText ? `<span class="status-text">${escapeHtml(msg.statusText)}</span>` : '';
+      const color = escapeHtml(msg.color || '#1f2937');
 
-      el.className = 'message' + (own ? ' own' : '') + (deleted ? ' deleted' : '');
-      el.innerHTML = `
+      node.className = 'message' + (own ? ' own' : '') + (deleted ? ' deleted' : '');
+      node.innerHTML = `
         ${reply}
-        <div class="name" style="color:${data.color || '#1f2937'}">
+        <div class="name" style="color:${color}">
           ${name}${statusText}${deleted ? '<span class="deleted-badge">（削除済み）</span>' : ''}
         </div>
         <div class="text">${linkifyUrls(escapeHtml(text)).replace(/\n/g, '<br>')}</div>
         <div class="meta">
-          <span>${formatTime(data.timestamp || Date.now())}</span>
-          <span>${data.edited && !deleted ? '(編集済み)' : ''}</span>
+          <span>${formatTime(msg.timestamp || Date.now())}</span>
+          <span>${msg.edited && !deleted ? '(編集済み)' : ''}</span>
         </div>
       `;
 
-      return el;
+      return node;
+    }
+
+    function rerenderDependentReplies(updatedId) {
+      state.messageStore.forEach((msg, msgId) => {
+        const replyId = msg?.replyTo?.id ?? msg?.replyTo?.messageId ?? msg?.replyTo?._id ?? null;
+        if (replyId === updatedId) {
+          renderMessage(msg);
+        }
+      });
     }
 
     function addMessage(data) {
@@ -453,9 +539,21 @@
     }
 
     function updateMessage(data) {
-      const id = normalizeId(data);
-      const existed = messageMap.has(id);
-      renderMessage(data);
+      const msg = normalizeMessage(data);
+      const id = msg.id;
+      const existed = state.messageMap.has(id);
+
+      const previous = state.messageStore.get(id);
+      const merged = previous ? { ...previous, ...msg } : msg;
+
+      if (previous?.replyTo && !merged.replyTo) {
+        merged.replyTo = cloneDeep(previous.replyTo);
+      }
+
+      state.messageStore.set(id, cloneDeep(merged));
+      renderMessage(merged);
+      rerenderDependentReplies(id);
+
       if (!existed) {
         showEmptyIfNeeded();
       }
@@ -465,25 +563,27 @@
     function deleteMessage(data) {
       const id = typeof data === 'object' && data !== null ? normalizeId(data) : data;
       renderDeleted(id);
+      rerenderDependentReplies(id);
       showEmptyIfNeeded();
       scrollIfNeeded();
     }
 
-    // 履歴は取得しない: ライブ受信のみ表示する
+    function disconnectSocket() {
+      if (!state.socket) return;
+
+      state.socket.removeAllListeners();
+      state.socket.close();
+      state.socket = null;
+    }
 
     function connect() {
-      const url = serverUrlInput.value.trim();
+      const url = el.serverUrlInput.value.trim();
       if (!url) return;
 
       localStorage.setItem('chatServerUrl', url);
+      disconnectSocket();
 
-      if (socket) {
-        socket.removeAllListeners();
-        socket.close();
-        socket = null;
-      }
-
-      socket = io(url, {
+      state.socket = io(url, {
         transports: ['websocket', 'polling'],
         reconnection: true,
         reconnectionAttempts: Infinity,
@@ -494,54 +594,41 @@
 
       setConnectionState('', '接続中...');
 
-      socket.on('connect', () => {
-        setConnectionState('connected', '接続済み');
+      state.socket.on('connect', () => setConnectionState('connected', '接続済み'));
+      state.socket.on('disconnect', () => setConnectionState('disconnected', '切断'));
+      state.socket.on('connect_error', () => setConnectionState('disconnected', '接続エラー'));
+      state.socket.on('reconnect', () => setConnectionState('connected', '再接続済み'));
+
+      state.socket.on('message', addMessage);
+      state.socket.on('messageUpdated', updateMessage);
+      state.socket.on('messageDeleted', deleteMessage);
+
+      state.socket.on('allMessagesDeleted', () => {
+        state.messageMap.forEach((_, id) => renderDeleted(id));
+        showEmptyIfNeeded();
+        scrollIfNeeded();
       });
 
-      socket.on('disconnect', () => {
-        setConnectionState('disconnected', '切断');
-      });
-
-      socket.on('connect_error', () => {
-        setConnectionState('disconnected', '接続エラー');
-      });
-
-      socket.on('reconnect', () => {
-        setConnectionState('connected', '再接続済み');
-      });
-
-      socket.on('message', addMessage);
-      socket.on('messageUpdated', updateMessage);
-      socket.on('messageDeleted', deleteMessage);
-
-      socket.on('allMessagesDeleted', () => {
-        messageMap.forEach((_, id) => renderDeleted(id));
-      });
-
-      socket.on('systemMessage', (text) => {
+      state.socket.on('systemMessage', (text) => {
         addMessage({ type: 'system', message: text, timestamp: Date.now() });
       });
     }
 
-    connectBtn.addEventListener('click', connect);
+    el.connectBtn.addEventListener('click', connect);
 
-    disconnectBtn.addEventListener('click', () => {
-      if (socket) {
-        socket.removeAllListeners();
-        socket.close();
-        socket = null;
-      }
+    el.disconnectBtn.addEventListener('click', () => {
+      disconnectSocket();
       setConnectionState('disconnected', '切断');
     });
 
-    chat.addEventListener('scroll', () => {
-      isAtBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80;
+    el.chat.addEventListener('scroll', () => {
+      state.isAtBottom = el.chat.scrollHeight - el.chat.scrollTop - el.chat.clientHeight < 80;
     });
 
     window.addEventListener('load', () => {
       const savedUrl = localStorage.getItem('chatServerUrl');
       if (savedUrl) {
-        serverUrlInput.value = savedUrl;
+        el.serverUrlInput.value = savedUrl;
         connect();
       }
       showEmptyIfNeeded();
