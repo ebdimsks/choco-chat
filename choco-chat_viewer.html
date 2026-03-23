@@ -1,0 +1,551 @@
+<meta name='viewport' content='width=device-width, initial-scale=1'/><!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Choco Chat Viewer</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --line: #e5e7eb;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --primary: #2563eb;
+      --danger: #ef4444;
+      --success: #22c55e;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    .app {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 16px;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .header,
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+
+    .header {
+      padding: 14px 16px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .title {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.2;
+    }
+
+    .sub {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .toolbar input {
+      width: min(100%, 360px);
+      padding: 10px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 10px;
+      outline: none;
+      font-size: 14px;
+      background: #fff;
+    }
+
+    .toolbar input:focus {
+      border-color: #60a5fa;
+      box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.15);
+    }
+
+    .toolbar button {
+      border: 0;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      color: #fff;
+      background: var(--primary);
+    }
+
+    .toolbar button.secondary {
+      background: #111827;
+    }
+
+    .panel-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--line);
+      background: #fafafa;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      background: #f3f4f6;
+      color: #4b5563;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #9ca3af;
+      box-shadow: 0 0 0 4px rgba(156, 163, 175, 0.16);
+    }
+
+    .dot.connected {
+      background: var(--success);
+      box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.16);
+    }
+
+    .dot.disconnected {
+      background: var(--danger);
+      box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.15);
+    }
+
+    .chat {
+      height: min(74vh, 780px);
+      overflow-y: auto;
+      padding: 14px;
+      background: linear-gradient(180deg, #fff 0%, #fbfdff 100%);
+    }
+
+    .empty {
+      padding: 48px 16px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .message {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px 14px;
+      background: #fff;
+      margin-bottom: 12px;
+    }
+
+    .message.own {
+      border-left: 4px solid var(--success);
+    }
+
+    .message.system {
+      background: #f8fafc;
+      color: var(--muted);
+      text-align: center;
+      font-style: italic;
+      border-style: dashed;
+    }
+
+    .message.deleted {
+      opacity: 0.8;
+      background: #fafafa;
+    }
+
+    .name {
+      font-weight: 800;
+      font-size: 14px;
+      margin-bottom: 8px;
+      word-break: break-word;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .deleted-badge {
+      font-size: 12px;
+      color: var(--danger);
+      font-weight: 700;
+      font-style: italic;
+    }
+
+    .status-text {
+      font-size: 13px;
+      color: var(--muted);
+      margin-left: 8px;
+      font-weight: 400;
+      display: inline-block;
+      vertical-align: middle;
+    }
+
+    .reply {
+      margin-bottom: 8px;
+      padding: 8px 10px;
+      border-left: 3px solid #cbd5e1;
+      border-radius: 8px;
+      background: #f8fafc;
+      color: #64748b;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .text {
+      white-space: pre-wrap;
+      line-height: 1.65;
+      font-size: 15px;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+    }
+
+    .message.deleted .text {
+      color: #9ca3af;
+      font-style: italic;
+    }
+
+    .meta {
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    a {
+      color: var(--primary);
+      text-decoration: underline;
+      word-break: break-all;
+    }
+
+    @media (max-width: 640px) {
+      .app {
+        padding: 10px;
+      }
+
+      .chat {
+        height: 74vh;
+        padding: 12px;
+      }
+
+      h1 {
+        font-size: 17px;
+      }
+
+      .toolbar input {
+        width: 100%;
+      }
+
+      .toolbar button {
+        flex: 1 1 auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="header">
+      <div class="title">
+        <h1>Choco Chat Viewer</h1>
+        <div class="sub">閲覧専用</div>
+      </div>
+      <div class="toolbar">
+        <input id="serverUrl" type="text" placeholder="http://localhost:3000" aria-label="接続先URL" />
+        <button id="connectBtn">接続</button>
+        <button id="disconnectBtn" class="secondary">切断</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <div class="status">
+          <span id="connDot" class="dot"></span>
+          <span id="connText">未接続</span>
+        </div>
+      </div>
+
+      <div id="chat" class="chat">
+        <div id="empty" class="empty">接続するとメッセージを表示します。</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script>
+    const chat = document.getElementById('chat');
+    const empty = document.getElementById('empty');
+    const connDot = document.getElementById('connDot');
+    const connText = document.getElementById('connText');
+    const serverUrlInput = document.getElementById('serverUrl');
+    const connectBtn = document.getElementById('connectBtn');
+    const disconnectBtn = document.getElementById('disconnectBtn');
+
+    let socket = null;
+    let isAtBottom = true;
+    const messageMap = new Map();
+    const deletedIds = new Set();
+
+    function setConnectionState(state, text) {
+      connDot.classList.remove('connected', 'disconnected');
+      if (state) connDot.classList.add(state);
+      connText.textContent = text;
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text ?? '';
+      return div.innerHTML;
+    }
+
+    function linkifyUrls(text) {
+      const urlPattern = /(https?:\/\/[^\s<>"{}|\\^`\[\]]+)/g;
+      return text.replace(urlPattern, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+    }
+
+    function formatTime(timestamp) {
+      const d = new Date(timestamp);
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+
+    function scrollIfNeeded(force = false) {
+      if (force || isAtBottom) {
+        chat.scrollTop = chat.scrollHeight;
+      }
+    }
+
+    function showEmptyIfNeeded() {
+      empty.style.display = messageMap.size === 0 ? 'block' : 'none';
+    }
+
+    function normalizeId(data) {
+      return data?.id ?? data?.messageId ?? data?._id ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
+
+    function isDeleted(data, id) {
+      return Boolean(
+        data?.deleted ||
+        data?.isDeleted ||
+        data?.status === 'deleted' ||
+        deletedIds.has(id)
+      );
+    }
+
+    function renderDeleted(id) {
+      deletedIds.add(id);
+      const el = messageMap.get(id);
+      if (!el) return;
+
+      el.classList.add('deleted');
+
+      const nameEl = el.querySelector('.name');
+      if (nameEl && !nameEl.querySelector('.deleted-badge')) {
+        const badge = document.createElement('span');
+        badge.className = 'deleted-badge';
+        badge.textContent = '（削除済み）';
+        nameEl.appendChild(badge);
+      }
+    }
+
+    function clearAndRenderHistory(messages) {
+      chat.innerHTML = '';
+      messageMap.clear();
+      deletedIds.clear();
+
+      if (Array.isArray(messages)) {
+        messages.forEach(renderMessage);
+      }
+
+      showEmptyIfNeeded();
+      scrollIfNeeded(true);
+    }
+
+    function renderMessage(data) {
+      const id = normalizeId(data);
+      let el = messageMap.get(id);
+
+      if (!el) {
+        el = document.createElement('div');
+        el.dataset.id = id;
+        messageMap.set(id, el);
+        chat.appendChild(el);
+      }
+
+      const system = data.username === 'システム' || data.type === 'system';
+      const deleted = isDeleted(data, id);
+      const own = Boolean(data.isOwn);
+
+      if (system) {
+        el.className = 'message system';
+        el.innerHTML = `
+          <div>${escapeHtml(data.message || '')}</div>
+          <div class="meta" style="justify-content:center;">
+            <span>${formatTime(data.timestamp || Date.now())}</span>
+          </div>
+        `;
+        return el;
+      }
+
+      const name = escapeHtml(data.username || data.from || '不明');
+      const text = data.message || '';
+      const statusText = data.statusText ? `<span class="status-text">${escapeHtml(data.statusText)}</span>` : '';
+      const reply = data.replyTo
+        ? `<div class="reply">↩ ${escapeHtml(data.replyTo.username || '不明')}: ${escapeHtml((data.replyTo.message || '').slice(0, 120))}${(data.replyTo.message || '').length > 120 ? '…' : ''}</div>`
+        : '';
+
+      el.className = 'message' + (own ? ' own' : '') + (deleted ? ' deleted' : '');
+      el.innerHTML = `
+        ${reply}
+        <div class="name" style="color:${data.color || '#1f2937'}">
+          ${name}${statusText}${deleted ? '<span class="deleted-badge">（削除済み）</span>' : ''}
+        </div>
+        <div class="text">${linkifyUrls(escapeHtml(text)).replace(/\n/g, '<br>')}</div>
+        <div class="meta">
+          <span>${formatTime(data.timestamp || Date.now())}</span>
+          <span>${data.edited && !deleted ? '(編集済み)' : ''}</span>
+        </div>
+      `;
+
+      return el;
+    }
+
+    function addMessage(data) {
+      renderMessage(data);
+      showEmptyIfNeeded();
+      scrollIfNeeded();
+    }
+
+    function updateMessage(data) {
+      const id = normalizeId(data);
+      const existed = messageMap.has(id);
+      renderMessage(data);
+      if (!existed) {
+        showEmptyIfNeeded();
+      }
+      scrollIfNeeded();
+    }
+
+    function deleteMessage(data) {
+      const id = typeof data === 'object' && data !== null ? normalizeId(data) : data;
+      renderDeleted(id);
+      showEmptyIfNeeded();
+      scrollIfNeeded();
+    }
+
+    // 履歴は取得しない: ライブ受信のみ表示する
+
+    function connect() {
+      const url = serverUrlInput.value.trim();
+      if (!url) return;
+
+      localStorage.setItem('chatServerUrl', url);
+
+      if (socket) {
+        socket.removeAllListeners();
+        socket.close();
+        socket = null;
+      }
+
+      socket = io(url, {
+        transports: ['websocket', 'polling'],
+        reconnection: true,
+        reconnectionAttempts: Infinity,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        timeout: 20000
+      });
+
+      setConnectionState('', '接続中...');
+
+      socket.on('connect', () => {
+        setConnectionState('connected', '接続済み');
+      });
+
+      socket.on('disconnect', () => {
+        setConnectionState('disconnected', '切断');
+      });
+
+      socket.on('connect_error', () => {
+        setConnectionState('disconnected', '接続エラー');
+      });
+
+      socket.on('reconnect', () => {
+        setConnectionState('connected', '再接続済み');
+      });
+
+      socket.on('message', addMessage);
+      socket.on('messageUpdated', updateMessage);
+      socket.on('messageDeleted', deleteMessage);
+
+      socket.on('allMessagesDeleted', () => {
+        messageMap.forEach((_, id) => renderDeleted(id));
+      });
+
+      socket.on('systemMessage', (text) => {
+        addMessage({ type: 'system', message: text, timestamp: Date.now() });
+      });
+    }
+
+    connectBtn.addEventListener('click', connect);
+
+    disconnectBtn.addEventListener('click', () => {
+      if (socket) {
+        socket.removeAllListeners();
+        socket.close();
+        socket = null;
+      }
+      setConnectionState('disconnected', '切断');
+    });
+
+    chat.addEventListener('scroll', () => {
+      isAtBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80;
+    });
+
+    window.addEventListener('load', () => {
+      const savedUrl = localStorage.getItem('chatServerUrl');
+      if (savedUrl) {
+        serverUrlInput.value = savedUrl;
+        connect();
+      }
+      showEmptyIfNeeded();
+    });
+  </script>
+</body>
+</html>
